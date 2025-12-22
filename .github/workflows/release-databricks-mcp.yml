@@ -1,0 +1,94 @@
+name: Release databricks-mcp
+
+on:
+  push:
+    tags:
+      - "databricks-mcp-v*"
+  workflow_dispatch:
+    inputs:
+      production:
+        description: "Publish to PyPI?"
+        required: true
+        default: false
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: write
+    environment:
+      name: ${{ inputs.production == true && 'pypi' || 'testpypi' }}
+      url: ${{ inputs.production == true && 'https://pypi.org/p/databricks-ai-bridge' || 'https://test.pypi.org/p/databricks-ai-bridge' }}
+    defaults:
+      run:
+        working-directory: databricks_mcp
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install build tools
+        run: pip install build
+
+      - name: Verify version matches tag
+        run: |
+          TAG_VERSION=${GITHUB_REF#refs/tags/databricks-mcp-v}
+          PKG_VERSION=$(python -c "import tomllib; print(tomllib.load(open('pyproject.toml', 'rb'))['project']['version'])")
+          if [ "$TAG_VERSION" != "$PKG_VERSION" ]; then
+            echo "Tag version ($TAG_VERSION) does not match package version ($PKG_VERSION)"
+            exit 1
+          fi
+
+      - name: Build package
+        run: python -m build
+
+      - name: Store the distribution packages
+        uses: actions/upload-artifact@v5
+        with:
+          name: dist
+          path: dist/
+
+      - uses: ncipollo/release-action@v1
+        if: inputs.production == true
+        with:
+          artifacts: "dist/*.whl,dist/*.tar.gz"
+          draft: true
+          generateReleaseNotes: true
+
+      - name: Publish to PyPI
+        if: inputs.production == true
+        uses: pypa/gh-action-pypi-publish@release/v1
+
+      - name: Publish to Test PyPI
+        if: inputs.production == false
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          repository-url: https://test.pypi.org/legacy/
+
+      - name: Wait for package to be available
+        run: sleep 60
+
+      - name: Install published package from PyPI
+        if: inputs.production == true
+        run: |
+          pip install databricks-mcp
+
+      - name: Install published package from Test PyPI
+        if: inputs.production == false
+        run: |
+          pip install --index-url https://test.pypi.org/simple/ databricks-mcp
+
+      - name: Smoke test - verify version
+        run: |
+          EXPECTED_VERSION=$(python -c "import tomllib; print(tomllib.load(open('pyproject.toml', 'rb'))['project']['version'])")
+          INSTALLED_VERSION=$(python -c "import databricks_mcp; print(databricks_mcp.__version__)")
+          echo "Expected version: $EXPECTED_VERSION"
+          echo "Installed version: $INSTALLED_VERSION"
+          if [ "$EXPECTED_VERSION" != "$INSTALLED_VERSION" ]; then
+            echo "Version mismatch!"
+            exit 1
+          fi
+          echo "Smoke test passed: versions match!"
