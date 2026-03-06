@@ -9,6 +9,20 @@ from langchain_mcp_adapters.sessions import McpHttpClientFactory, StreamableHttp
 from pydantic import BaseModel, ConfigDict, Field
 
 
+async def log_request(request):
+    print(f"Request event hook: {request.method} {request.url} - Waiting for response")
+    print(f"Headers: {request.headers}")
+    # Be careful with .read(), it can exhaust the stream for some body types
+    # print(f"Body: {await request.aread()}")
+
+
+async def log_response(response):
+    print(f"Response event hook: {response.status_code} {response.url} - Waiting for response")
+    print(f"Headers: {response.headers}")
+    body = await response.aread()
+    print("body", body.decode())
+
+
 class DatabricksMcpHttpClientFactory(McpHttpClientFactory):
     def __call__(
         self,
@@ -26,6 +40,7 @@ class DatabricksMcpHttpClientFactory(McpHttpClientFactory):
                 headers=headers,
                 timeout=timeout,
                 auth=DatabricksOAuthClientProvider(auth.workspace_client),
+                event_hooks={"request": [log_request], "response": [log_response]},
             )
         else:
             return httpx.AsyncClient(
@@ -266,6 +281,13 @@ class DatabricksMCPServer(MCPServer):
         """
         # Get base connection dict
         data = super().to_connection_dict()
+
+        def log_request(request):
+            print(f"Request event hook: {request.method} {request.url} - Waiting for response")
+            print(f"Headers: {request.headers}")
+            # Be careful with .read(), it can exhaust the stream for some body types
+            # print(f"Body: {request.read()}")
+
 
         # Add Databricks auth provider
         data["auth"] = self._auth_provider
